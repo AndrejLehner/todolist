@@ -1,61 +1,101 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
+import os
 import sqlite3
+import psycopg2
+from psycopg2 import extras
 import hashlib
 import datetime
 from functools import wraps
+from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
 
 app = Flask(__name__)
-app.secret_key = 'your-secret-key-here'  # Für Sessions und Flash Messages
+app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-here')
 
+# =======================================================
 # Datenbank-Konfiguration
-DATABASE = 'app.db'
-
+# Wählt automatisch die richtige Datenbank basierend auf der Umgebungsvariable
+# =======================================================
 def get_db_connection():
-    """Verbindung zur SQLite-Datenbank herstellen"""
-    conn = sqlite3.connect(DATABASE)
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Stellt die Verbindung zur richtigen Datenbank her"""
+    if os.environ.get('DATABASE_URL'):
+        # PostgreSQL für die Produktion (z.B. auf Render)
+        conn = psycopg2.connect(os.environ.get('DATABASE_URL'))
+        # Verwende DictCursor, um die Ausgabe wie bei sqlite3.Row zu erhalten
+        return conn, conn.cursor(cursor_factory=extras.DictCursor)
+    else:
+        # SQLite für die lokale Entwicklung
+        conn = sqlite3.connect('app.db')
+        conn.row_factory = sqlite3.Row
+        return conn, conn.cursor()
 
 def init_db():
     """Datenbank und Tabellen initialisieren"""
-    conn = get_db_connection()
-    
-    # Benutzer-Tabelle
-    conn.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            email TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # Blog-Posts Tabelle
-    conn.execute('''
-        CREATE TABLE IF NOT EXISTS posts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            content TEXT NOT NULL,
-            author_id INTEGER,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (author_id) REFERENCES users (id)
-        )
-    ''')
-    
-    # Todo-Tabelle
-    conn.execute('''
-        CREATE TABLE IF NOT EXISTS todos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task TEXT NOT NULL,
-            completed BOOLEAN DEFAULT FALSE,
-            user_id INTEGER,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users (id)
-        )
-    ''')
-    
+    conn, cur = get_db_connection()
+
+    if isinstance(conn, psycopg2.extensions.connection):
+        # SQL-Anweisungen für PostgreSQL
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                email TEXT,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS posts (
+                id SERIAL PRIMARY KEY,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                author_id INTEGER,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (author_id) REFERENCES users (id)
+            )
+        ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS todos (
+                id SERIAL PRIMARY KEY,
+                task TEXT NOT NULL,
+                completed BOOLEAN DEFAULT FALSE,
+                user_id INTEGER,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            )
+        ''')
+    else:
+        # SQL-Anweisungen für SQLite
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                email TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS posts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                author_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (author_id) REFERENCES users (id)
+            )
+        ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS todos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task TEXT NOT NULL,
+                completed BOOLEAN DEFAULT FALSE,
+                user_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            )
+        ''')
+
     conn.commit()
+    cur.close()
     conn.close()
 
 def hash_password(password):
@@ -77,16 +117,17 @@ def login_required(f):
 @app.route('/')
 def index():
     """Startseite mit aktuellen Blog-Posts"""
-    conn = get_db_connection()
-    posts = conn.execute('''
+    conn, cur = get_db_connection()
+    cur.execute('''
         SELECT p.*, u.username 
         FROM posts p 
         JOIN users u ON p.author_id = u.id 
         ORDER BY p.created_at DESC 
         LIMIT 5
-    ''').fetchall()
+    ''')
+    posts = cur.fetchall()
+    cur.close()
     conn.close()
-    
     return render_template('index.html', posts=posts)
 
 @app.route('/register', methods=['GET', 'POST'])
@@ -101,18 +142,20 @@ def register():
             flash('Benutzername und Passwort sind erforderlich!', 'error')
             return render_template('register.html')
         
-        conn = get_db_connection()
+        conn, cur = get_db_connection()
         try:
-            conn.execute(
-                'INSERT INTO users (username, password_hash, email) VALUES (?, ?, ?)',
+            cur.execute(
+                'INSERT INTO users (username, password_hash, email) VALUES (%s, %s, %s)',
                 (username, hash_password(password), email)
             )
             conn.commit()
             flash('Registrierung erfolgreich!', 'success')
             return redirect(url_for('login'))
-        except sqlite3.IntegrityError:
+        except (sqlite3.IntegrityError, psycopg2.errors.UniqueViolation):
+            conn.rollback()
             flash('Benutzername bereits vergeben!', 'error')
         finally:
+            cur.close()
             conn.close()
     
     return render_template('register.html')
@@ -124,11 +167,13 @@ def login():
         username = request.form['username']
         password = request.form['password']
         
-        conn = get_db_connection()
-        user = conn.execute(
-            'SELECT * FROM users WHERE username = ? AND password_hash = ?',
+        conn, cur = get_db_connection()
+        cur.execute(
+            'SELECT * FROM users WHERE username = %s AND password_hash = %s',
             (username, hash_password(password))
-        ).fetchone()
+        )
+        user = cur.fetchone()
+        cur.close()
         conn.close()
         
         if user:
@@ -152,20 +197,23 @@ def logout():
 @login_required
 def dashboard():
     """Benutzer-Dashboard"""
-    conn = get_db_connection()
+    conn, cur = get_db_connection()
     
     # Benutzer-Posts
-    user_posts = conn.execute(
-        'SELECT * FROM posts WHERE author_id = ? ORDER BY created_at DESC',
+    cur.execute(
+        'SELECT * FROM posts WHERE author_id = %s ORDER BY created_at DESC',
         (session['user_id'],)
-    ).fetchall()
+    )
+    user_posts = cur.fetchall()
     
     # Benutzer-Todos
-    todos = conn.execute(
-        'SELECT * FROM todos WHERE user_id = ? ORDER BY created_at DESC',
+    cur.execute(
+        'SELECT * FROM todos WHERE user_id = %s ORDER BY created_at DESC',
         (session['user_id'],)
-    ).fetchall()
+    )
+    todos = cur.fetchall()
     
+    cur.close()
     conn.close()
     
     return render_template('dashboard.html', posts=user_posts, todos=todos)
@@ -182,12 +230,13 @@ def create_post():
             flash('Titel und Inhalt sind erforderlich!', 'error')
             return render_template('create_post.html')
         
-        conn = get_db_connection()
-        conn.execute(
-            'INSERT INTO posts (title, content, author_id) VALUES (?, ?, ?)',
+        conn, cur = get_db_connection()
+        cur.execute(
+            'INSERT INTO posts (title, content, author_id) VALUES (%s, %s, %s)',
             (title, content, session['user_id'])
         )
         conn.commit()
+        cur.close()
         conn.close()
         
         flash('Post erfolgreich erstellt!', 'success')
@@ -198,13 +247,15 @@ def create_post():
 @app.route('/post/<int:post_id>')
 def view_post(post_id):
     """Einzelnen Post anzeigen"""
-    conn = get_db_connection()
-    post = conn.execute('''
+    conn, cur = get_db_connection()
+    cur.execute('''
         SELECT p.*, u.username 
         FROM posts p 
         JOIN users u ON p.author_id = u.id 
-        WHERE p.id = ?
-    ''', (post_id,)).fetchone()
+        WHERE p.id = %s
+    ''', (post_id,))
+    post = cur.fetchone()
+    cur.close()
     conn.close()
     
     if not post:
@@ -219,11 +270,13 @@ def view_post(post_id):
 @login_required
 def api_get_todos():
     """Todos als JSON zurückgeben"""
-    conn = get_db_connection()
-    todos = conn.execute(
-        'SELECT * FROM todos WHERE user_id = ? ORDER BY created_at DESC',
+    conn, cur = get_db_connection()
+    cur.execute(
+        'SELECT * FROM todos WHERE user_id = %s ORDER BY created_at DESC',
         (session['user_id'],)
-    ).fetchall()
+    )
+    todos = cur.fetchall()
+    cur.close()
     conn.close()
     
     return jsonify([dict(todo) for todo in todos])
@@ -238,16 +291,17 @@ def api_create_todo():
     if not task:
         return jsonify({'error': 'Task ist erforderlich'}), 400
     
-    conn = get_db_connection()
-    cursor = conn.execute(
-        'INSERT INTO todos (task, user_id) VALUES (?, ?)',
+    conn, cur = get_db_connection()
+    cur.execute(
+        'INSERT INTO todos (task, user_id) VALUES (%s, %s) RETURNING id',
         (task, session['user_id'])
     )
-    todo_id = cursor.lastrowid
+    todo = cur.fetchone()
     conn.commit()
+    cur.close()
     conn.close()
     
-    return jsonify({'id': todo_id, 'task': task, 'completed': False}), 201
+    return jsonify({'id': todo['id'], 'task': task, 'completed': False}), 201
 
 @app.route('/api/todos/<int:todo_id>', methods=['PUT'])
 @login_required
@@ -256,12 +310,13 @@ def api_update_todo(todo_id):
     data = request.get_json()
     completed = data.get('completed', False)
     
-    conn = get_db_connection()
-    conn.execute(
-        'UPDATE todos SET completed = ? WHERE id = ? AND user_id = ?',
+    conn, cur = get_db_connection()
+    cur.execute(
+        'UPDATE todos SET completed = %s WHERE id = %s AND user_id = %s',
         (completed, todo_id, session['user_id'])
     )
     conn.commit()
+    cur.close()
     conn.close()
     
     return jsonify({'success': True})
@@ -270,12 +325,13 @@ def api_update_todo(todo_id):
 @login_required
 def api_delete_todo(todo_id):
     """Todo löschen"""
-    conn = get_db_connection()
-    conn.execute(
-        'DELETE FROM todos WHERE id = ? AND user_id = ?',
+    conn, cur = get_db_connection()
+    cur.execute(
+        'DELETE FROM todos WHERE id = %s AND user_id = %s',
         (todo_id, session['user_id'])
     )
     conn.commit()
+    cur.close()
     conn.close()
     
     return jsonify({'success': True})
@@ -296,9 +352,18 @@ def internal_error(error):
 def datetime_filter(value):
     """Datum formatieren"""
     if isinstance(value, str):
-        value = datetime.datetime.strptime(value, '%Y-%m-%d %H:%M:%S')
+        # Annahme: PostgreSQL und SQLite speichern Datums-Strings in unterschiedlichen Formaten
+        try:
+            # Versuch, PostgreSQL-Format zu parsen
+            value = datetime.datetime.fromisoformat(value)
+        except ValueError:
+            # Fallback für SQLite-Format
+            value = datetime.datetime.strptime(value, '%Y-%m-%d %H:%M:%S')
     return value.strftime('%d.%m.%Y %H:%M')
 
 if __name__ == '__main__':
-    init_db()  # Datenbank initialisieren
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    # Initialisierung der Datenbank
+    init_db()
+    
+    # `debug=True` nur für lokale Entwicklung verwenden
+    app.run(host='0.0.0.0', port=5000)
