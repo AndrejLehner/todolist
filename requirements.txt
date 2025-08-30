@@ -19,3 +19,4 @@ itsdangerous==2.1.2          # Sichere Signaturen (bereits in Flask enthalten)
 # Development Tools
 python-decouple==3.8         # Konfigurationsmanagement
 gunicorn==21.2.0             # WSGI-Server für Produktion
+psycopg2-binary              # benötigt für Render Deployment
