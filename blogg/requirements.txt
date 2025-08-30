@@ -1,0 +1,21 @@
+# Kern-Dependencies
+Flask==2.3.3
+Werkzeug==2.3.7
+
+# Optionale aber nützliche Packages für Flask-Entwicklung
+Flask-SQLAlchemy==3.0.5      # ORM für erweiterte Datenbankoperationen
+Flask-Migrate==4.0.5         # Datenbankmigrationen
+Flask-Login==0.6.3           # Erweiterte Benutzerauthentifizierung
+Flask-WTF==1.1.1             # Formular-Handling und CSRF-Schutz
+WTForms==3.0.1               # Formular-Validierung
+Flask-Mail==0.9.1            # E-Mail-Funktionalität
+Flask-Cors==4.0.0            # Cross-Origin Resource Sharing
+python-dotenv==1.0.0         # Umgebungsvariablen aus .env Dateien
+
+# Sicherheit
+bcrypt==4.0.1                # Besseres Password Hashing als SHA256
+itsdangerous==2.1.2          # Sichere Signaturen (bereits in Flask enthalten)
+
+# Development Tools
+python-decouple==3.8         # Konfigurationsmanagement
+gunicorn==21.2.0             # WSGI-Server für Produktion

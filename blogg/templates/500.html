@@ -1,0 +1,13 @@
+<!-- templates/500.html -->
+{% extends "base.html" %}
+
+{% block title %}Server Fehler{% endblock %}
+
+{% block content %}
+<div class="text-center">
+    <h1 class="display-1">500</h1>
+    <h2>Server Fehler</h2>
+    <p class="lead">Es ist ein unerwarteter Fehler aufgetreten.</p>
+    <a href="{{ url_for('index') }}" class="btn btn-primary">Zur Startseite</a>
+</div>
+{% endblock %}

@@ -1,0 +1,155 @@
+<!-- templates/dashboard.html -->
+{% extends "base.html" %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<h1>Dashboard</h1>
+<p class="lead">Willkommen zurück, {{ session.username }}!</p>
+
+<div class="row">
+    <!-- Blog Posts Section -->
+    <div class="col-md-6">
+        <h3>Meine Posts</h3>
+        {% if posts %}
+            {% for post in posts %}
+                <div class="card mb-3">
+                    <div class="card-body">
+                        <h5 class="card-title">
+                            <a href="{{ url_for('view_post', post_id=post.id) }}">{{ post.title }}</a>
+                        </h5>
+                        <p class="card-text">{{ post.content[:100] }}...</p>
+                        <small class="text-muted">{{ post.created_at|datetime }}</small>
+                    </div>
+                </div>
+            {% endfor %}
+        {% else %}
+            <p>Sie haben noch keine Posts erstellt.</p>
+        {% endif %}
+        <a href="{{ url_for('create_post') }}" class="btn btn-primary">Neuer Post</a>
+    </div>
+
+    <!-- Todos Section -->
+    <div class="col-md-6">
+        <h3>Meine Todos</h3>
+        <div class="mb-3">
+            <div class="input-group">
+                <input type="text" id="newTodo" class="form-control" placeholder="Neue Aufgabe...">
+                <button class="btn btn-success" onclick="addTodo()">Hinzufügen</button>
+            </div>
+        </div>
+        <div id="todoList">
+            {% for todo in todos %}
+                <div class="card mb-2" id="todo-{{ todo.id }}">
+                    <div class="card-body py-2">
+                        <div class="form-check d-flex justify-content-between align-items-center">
+                            <div>
+                                <input class="form-check-input" type="checkbox" 
+                                       {% if todo.completed %}checked{% endif %}
+                                       onchange="toggleTodo({{ todo.id }}, this.checked)">
+                                <label class="form-check-label {% if todo.completed %}text-muted text-decoration-line-through{% endif %}">
+                                    {{ todo.task }}
+                                </label>
+                            </div>
+                            <button class="btn btn-sm btn-danger" onclick="deleteTodo({{ todo.id }})">Löschen</button>
+                        </div>
+                    </div>
+                </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function addTodo() {
+    const input = document.getElementById('newTodo');
+    const task = input.value.trim();
+    
+    if (!task) return;
+    
+    try {
+        const response = await fetch('/api/todos', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ task: task })
+        });
+        
+        if (response.ok) {
+            const todo = await response.json();
+            addTodoToDOM(todo);
+            input.value = '';
+        }
+    } catch (error) {
+        console.error('Error:', error);
+    }
+}
+
+async function toggleTodo(todoId, completed) {
+    try {
+        await fetch(`/api/todos/${todoId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ completed: completed })
+        });
+        
+        const label = document.querySelector(`#todo-${todoId} label`);
+        if (completed) {
+            label.classList.add('text-muted', 'text-decoration-line-through');
+        } else {
+            label.classList.remove('text-muted', 'text-decoration-line-through');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+    }
+}
+
+async function deleteTodo(todoId) {
+    if (!confirm('Todo wirklich löschen?')) return;
+    
+    try {
+        await fetch(`/api/todos/${todoId}`, {
+            method: 'DELETE'
+        });
+        
+        document.getElementById(`todo-${todoId}`).remove();
+    } catch (error) {
+        console.error('Error:', error);
+    }
+}
+
+function addTodoToDOM(todo) {
+    const todoList = document.getElementById('todoList');
+    const todoHTML = `
+        <div class="card mb-2" id="todo-${todo.id}">
+            <div class="card-body py-2">
+                <div class="form-check d-flex justify-content-between align-items-center">
+                    <div>
+                        <input class="form-check-input" type="checkbox" 
+                               onchange="toggleTodo(${todo.id}, this.checked)">
+                        <label class="form-check-label">
+                            ${todo.task}
+                        </label>
+                    </div>
+                    <button class="btn btn-sm btn-danger" onclick="deleteTodo(${todo.id})">Löschen</button>
+                </div>
+            </div>
+        </div>
+    `;
+    todoList.insertAdjacentHTML('afterbegin', todoHTML);
+}
+
+// Enter-Taste für neues Todo
+document.getElementById('newTodo').addEventListener('keypress', function(e) {
+    if (e.key === 'Enter') {
+        addTodo();
+    }
+});
+</script>
+{% endblock %}

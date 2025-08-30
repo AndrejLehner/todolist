@@ -1,0 +1,21 @@
+<!-- templates/post.html -->
+{% extends "base.html" %}
+
+{% block title %}{{ post.title }}{% endblock %}
+
+{% block content %}
+<article>
+    <h1>{{ post.title }}</h1>
+    <p class="text-muted">
+        Von {{ post.username }} am {{ post.created_at|datetime }}
+    </p>
+    <hr>
+    <div class="content">
+        {{ post.content|replace('\n', '<br>')|safe }}
+    </div>
+</article>
+
+<div class="mt-4">
+    <a href="{{ url_for('index') }}" class="btn btn-secondary">Zurück zur Startseite</a>
+</div>
+{% endblock %}
